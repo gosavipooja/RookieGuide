@@ -1,0 +1,8 @@
+{
+  "name": "The Rookie Guide: Sports AI",
+  "description": "An AI-powered sports companion that explains complex sports moments (like American Football) to beginners using simple language, everyday analogies, and zero jargon.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
