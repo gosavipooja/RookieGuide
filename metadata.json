@@ -1,6 +1,6 @@
 {
-  "name": "The Rookie Guide: Sports AI",
-  "description": "An AI-powered sports companion that explains complex sports moments (like American Football) to beginners using simple language, everyday analogies, and zero jargon.",
+  "name": "FanPlay: Sports AI",
+  "description": "Your ultimate AI sports companion that breaks down complex plays and rules using clear language and interactive insights.",
   "requestFramePermissions": [
     "camera",
     "microphone"
