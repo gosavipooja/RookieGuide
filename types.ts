@@ -5,6 +5,7 @@ export interface GuideResponse {
   whatHappened: string;
   whyReacted: string;
   nextSteps: string;
+  sources?: { title: string; url: string }[];
 }
 
 export interface AnalysisState {

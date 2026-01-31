@@ -4,32 +4,36 @@ import { GuideResponse, SportType, PersonaType } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const getSystemInstruction = (persona: PersonaType) => {
-  const instructions = {
-    beginner: "Assume ZERO prior knowledge. Use simple language and analogies (e.g., 'it's like tag'). No jargon.",
-    new_fan: "Use standard terminology but explain it briefly. Focus on why this play matters in a typical game.",
-    hardcore: "Focus on player stats, historical context, team rivalries, and the specific stakes for the season.",
-    coach: "Analyze the technical execution, formations, biomechanics, and strategic decision-making."
+const getSystemInstruction = (persona: PersonaType, gameHint?: string) => {
+  const personaPrompts = {
+    beginner: "Explain like a friendly relative who knows nothing about sports. Use simple analogies (e.g., 'the tennis court is like a game of keep-away'). Avoid all jargon like 'break point' or 'love' without simple explanation.",
+    new_fan: "Acknowledge the user is learning. Use basic terms but explain them in context. Focus on the scoring flow and major rules.",
+    hardcore: "Talk to a die-hard enthusiast. Use deep stats, player historical context (e.g., Nadal's dominance on clay), and the impact on their career legacies.",
+    coach: "Analyze technical execution, footwork patterns, tactical decision-making, and biomechanics (e.g., 'forehand top-spin rpm', 'baseline positioning')."
   };
 
-  return `
-    You are a world-class AI Sports Analyst acting as a ${persona.replace('_', ' ')}.
-    
-    TASK:
-    1. Identify the specific game (teams/players, event, year) from the input.
-    2. Provide 3-5 'Foundational Rules' for this sport generally.
-    3. Analyze the specific moment provided.
+  const identificationContext = gameHint 
+    ? `The match has been POSITIVELY IDENTIFIED as: "${gameHint}". STICK TO THIS MATCH. Use the same players, stats, and historical context as before.`
+    : `Identify the EXACT match (tournament, year, players, round) from the input description or URL using Google Search.`;
 
-    PERSONA RULES (${persona.toUpperCase()}):
-    ${instructions[persona]}
+  return `
+    You are an expert Sports Analyst acting as a ${persona.toUpperCase()} guide.
+    
+    CRITICAL INSTRUCTION:
+    1. ${identificationContext}
+    2. If a YouTube URL is provided, use Google Search grounding to verify the specific match and play.
+    3. For the sport of ${persona === 'beginner' ? 'the identified sport' : 'Tennis/Football/etc'}, provide 3-5 foundational rules.
+    4. Provide the analysis based on the selected persona level.
+
+    PERSONA STYLE: ${personaPrompts[persona]}
 
     OUTPUT FORMAT (JSON ONLY):
     {
-      "identifiedGame": "Specific Match Title (e.g. 2024 Super Bowl - Chiefs vs 49ers)",
+      "identifiedGame": "Official Match Title (e.g., 2008 Roland Garros Final: Rafael Nadal vs Roger Federer)",
       "basicRules": ["Rule 1: Brief explanation", "Rule 2...", "Rule 3..."],
-      "whatHappened": "The core analysis based on your persona.",
-      "whyReacted": "Why the crowd and players are behaving this way.",
-      "nextSteps": "What happens next in this match or situation."
+      "whatHappened": "A detailed but concise breakdown of the specific action based on your persona.",
+      "whyReacted": "The emotional context and the historical weight of the moment.",
+      "nextSteps": "What happened next in this match or the overall outcome of the tournament."
     }
   `;
 };
@@ -38,14 +42,16 @@ export async function analyzeSportsMoment(
   sport: SportType,
   persona: PersonaType,
   input: string | File,
-  isUrl: boolean = false
+  isUrl: boolean = false,
+  gameHint?: string
 ): Promise<GuideResponse> {
-  const model = 'gemini-3-flash-preview';
+  // Upgrading to Pro for superior reasoning and grounding search accuracy
+  const model = 'gemini-3-pro-preview';
   
   let contentParts: any[] = [];
   
   if (isUrl) {
-    contentParts.push({ text: `Analyze this ${sport} moment from: ${input}.` });
+    contentParts.push({ text: `Analyze the sport of ${sport}. Identify and explain the moment at this URL: ${input}. You must use googleSearch to be 100% accurate about the match details.` });
   } else if (input instanceof File) {
     const base64 = await fileToBase64(input);
     contentParts.push({
@@ -54,15 +60,16 @@ export async function analyzeSportsMoment(
         data: base64.split(',')[1],
       },
     });
-    contentParts.push({ text: `Analyze this ${sport} visual for a ${persona.replace('_', ' ')}.` });
+    contentParts.push({ text: `Analyze this ${sport} visual for a ${persona} level viewer. Identify the match.` });
   }
 
   const response = await ai.models.generateContent({
     model,
     contents: { parts: contentParts },
     config: {
-      systemInstruction: getSystemInstruction(persona),
+      systemInstruction: getSystemInstruction(persona, gameHint),
       responseMimeType: "application/json",
+      tools: [{ googleSearch: {} }],
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -81,9 +88,28 @@ export async function analyzeSportsMoment(
   });
 
   try {
-    return JSON.parse(response.text);
+    const result = JSON.parse(response.text);
+    
+    // Extract grounding URLs for the UI
+    const sources: { title: string; url: string }[] = [];
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (chunks) {
+      chunks.forEach((chunk: any) => {
+        if (chunk.web) {
+          sources.push({ title: chunk.web.title || 'Source', url: chunk.web.uri });
+        }
+      });
+    }
+
+    // Safety: ensure identifiedGame doesn't drift if a hint was provided
+    if (gameHint && !result.identifiedGame.toLowerCase().includes(gameHint.toLowerCase())) {
+        result.identifiedGame = gameHint;
+    }
+
+    return { ...result, sources: sources.length > 0 ? sources : undefined };
   } catch (e) {
-    throw new Error("Analysis failed. Try describing the play or link a clearer video.");
+    console.error("Gemini Analysis Error:", e);
+    throw new Error("I couldn't identify this specific moment accurately. Please check the URL or try another clip.");
   }
 }
 
