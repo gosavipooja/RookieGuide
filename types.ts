@@ -14,6 +14,6 @@ export interface AnalysisState {
   result: GuideResponse | null;
 }
 
-export type SportType = 'American Football' | 'Basketball' | 'Soccer' | 'Baseball' | 'Tennis' | 'Cricket';
+export type SportType = 'American Football' | 'Basketball' | 'Soccer' | 'Tennis';
 
-export type PersonaType = 'beginner' | 'new_fan' | 'hardcore' | 'coach';
+export type PersonaType = 'beginner' | 'new_fan' | 'hardcore';

@@ -4,36 +4,42 @@ import { GuideResponse, SportType, PersonaType } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const getSystemInstruction = (persona: PersonaType, gameHint?: string) => {
+const getSystemInstruction = (persona: PersonaType, initialSport: SportType, gameHint?: string) => {
   const personaPrompts = {
-    beginner: "Explain like a friendly relative who knows nothing about sports. Use simple analogies (e.g., 'the tennis court is like a game of keep-away'). Avoid all jargon like 'break point' or 'love' without simple explanation.",
-    new_fan: "Acknowledge the user is learning. Use basic terms but explain them in context. Focus on the scoring flow and major rules.",
-    hardcore: "Talk to a die-hard enthusiast. Use deep stats, player historical context (e.g., Nadal's dominance on clay), and the impact on their career legacies.",
-    coach: "Analyze technical execution, footwork patterns, tactical decision-making, and biomechanics (e.g., 'forehand top-spin rpm', 'baseline positioning')."
+    beginner: "Explain like a friendly relative who knows nothing about sports. Use simple analogies. Avoid all technical jargon.",
+    new_fan: "Acknowledge the user is learning. Use basic terms but explain them in context of the specific match rules.",
+    hardcore: "Talk to a die-hard enthusiast. Use deep stats, player career context, and advanced tactical analysis found in the search results."
   };
 
-  const identificationContext = gameHint 
-    ? `The match has been POSITIVELY IDENTIFIED as: "${gameHint}". STICK TO THIS MATCH. Use the same players, stats, and historical context as before.`
-    : `Identify the EXACT match (tournament, year, players, round) from the input description or URL using Google Search.`;
-
   return `
-    You are an expert Sports Analyst acting as a ${persona.toUpperCase()} guide.
+    You are an elite Sports Fact-Checker and Multi-Modal Analyst acting as a ${persona.toUpperCase()} guide.
     
-    CRITICAL INSTRUCTION:
-    1. ${identificationContext}
-    2. If a YouTube URL is provided, use Google Search grounding to verify the specific match and play.
-    3. For the sport of ${persona === 'beginner' ? 'the identified sport' : 'Tennis/Football/etc'}, provide 3-5 foundational rules.
-    4. Provide the analysis based on the selected persona level.
+    STRICT IDENTITY & SPORT LOCK PROTOCOL:
+    
+    STEP 1: METADATA ANCHORING (MANDATORY)
+    - If a URL is provided (e.g., https://www.youtube.com/watch?v=nQ6I2PdpzJI), your FIRST ACTION is to search Google for the exact Video ID: "nQ6I2PdpzJI".
+    - Find the OFFICIAL VIDEO TITLE, UPLOADER, and DATE.
+    - Search for the "Play-by-Play" or "Match Transcript" of the game identified in that title.
+    
+    STEP 2: THE "VISUAL GHOST" STRATEGY
+    - Since you are analyzing a URL, you must "watch" the video by retrieving its textual equivalent: find the exact sequence of events from news reports or official league play-logs.
+    - If the title is "NFL's Best Mic'd Up Moments", the sport is AMERICAN FOOTBALL. 
+    - CRITICAL: If the verified sport is different from "${initialSport}", you MUST ignore the "${initialSport}" selection and analyze it as the CORRECT sport.
+    
+    STEP 3: MULTI-MODAL RECONCILIATION
+    - Match the "Mic'd Up" audio snippets or highlights described in the video's metadata/comments with the actual game stats.
+    - If analyzing a FILE, use your vision to identify gear (helmets, pads) and field markings.
+    - DO NOT HALLUCINATE. If you see an NFL helmet, do not talk about a soccer penalty.
 
     PERSONA STYLE: ${personaPrompts[persona]}
 
     OUTPUT FORMAT (JSON ONLY):
     {
-      "identifiedGame": "Official Match Title (e.g., 2008 Roland Garros Final: Rafael Nadal vs Roger Federer)",
-      "basicRules": ["Rule 1: Brief explanation", "Rule 2...", "Rule 3..."],
-      "whatHappened": "A detailed but concise breakdown of the specific action based on your persona.",
-      "whyReacted": "The emotional context and the historical weight of the moment.",
-      "nextSteps": "What happened next in this match or the overall outcome of the tournament."
+      "identifiedGame": "Official Match or Video Title (e.g., NFL 2023: Best Mic'd Up Moments)",
+      "basicRules": ["Rules explaining the specific sport/play identified"],
+      "whatHappened": "A factually verified breakdown of the video content. If you corrected a misidentified sport, explain the actual sport here.",
+      "whyReacted": "The real-world importance of these players or this season context.",
+      "nextSteps": "The historical outcome of that season or the specific players' achievements."
     }
   `;
 };
@@ -45,13 +51,19 @@ export async function analyzeSportsMoment(
   isUrl: boolean = false,
   gameHint?: string
 ): Promise<GuideResponse> {
-  // Upgrading to Pro for superior reasoning and grounding search accuracy
   const model = 'gemini-3-pro-preview';
   
   let contentParts: any[] = [];
   
   if (isUrl) {
-    contentParts.push({ text: `Analyze the sport of ${sport}. Identify and explain the moment at this URL: ${input}. You must use googleSearch to be 100% accurate about the match details.` });
+    const videoId = typeof input === 'string' ? input.split('v=')[1]?.split('&')[0] : '';
+    contentParts.push({ text: `
+      DEEP VERIFICATION REQUEST:
+      1. Search for: "YouTube video ${videoId} title and transcript".
+      2. Find the official play-by-play log for the match described in that video.
+      3. Confirm the sport. If it is NOT ${sport}, pivot to the correct sport.
+      4. Use the specific events found in the search results (scorers, big plays) to explain the video content to a ${persona}.
+    ` });
   } else if (input instanceof File) {
     const base64 = await fileToBase64(input);
     contentParts.push({
@@ -60,27 +72,48 @@ export async function analyzeSportsMoment(
         data: base64.split(',')[1],
       },
     });
-    contentParts.push({ text: `Analyze this ${sport} visual for a ${persona} level viewer. Identify the match.` });
+    contentParts.push({ text: `
+      VISION ANALYSIS REQUEST:
+      1. Analyze the gear, ball, and field in this file.
+      2. Identify the sport and search for the specific teams/players shown.
+      3. Verify the date/season by looking at kit sponsors and styles.
+      4. Provide a ${persona}-level explanation.
+    ` });
   }
 
   const response = await ai.models.generateContent({
     model,
     contents: { parts: contentParts },
     config: {
-      systemInstruction: getSystemInstruction(persona, gameHint),
+      systemInstruction: getSystemInstruction(persona, sport, gameHint),
       responseMimeType: "application/json",
       tools: [{ googleSearch: {} }],
+      // Adding thinking budget for complex cross-referencing
+      thinkingConfig: { thinkingBudget: 4000 },
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          identifiedGame: { type: Type.STRING },
+          identifiedGame: { 
+            type: Type.STRING,
+            description: "Verified title. Must match search results exactly."
+          },
           basicRules: { 
             type: Type.ARRAY,
-            items: { type: Type.STRING }
+            items: { type: Type.STRING },
+            description: "Rules for the sport actually found in the video."
           },
-          whatHappened: { type: Type.STRING },
-          whyReacted: { type: Type.STRING },
-          nextSteps: { type: Type.STRING },
+          whatHappened: { 
+            type: Type.STRING,
+            description: "Factual breakdown of the specific video content."
+          },
+          whyReacted: { 
+            type: Type.STRING,
+            description: "Contextual significance of this moment."
+          },
+          nextSteps: { 
+            type: Type.STRING,
+            description: "Historical aftermath."
+          },
         },
         required: ["identifiedGame", "basicRules", "whatHappened", "whyReacted", "nextSteps"],
       },
@@ -90,26 +123,20 @@ export async function analyzeSportsMoment(
   try {
     const result = JSON.parse(response.text);
     
-    // Extract grounding URLs for the UI
     const sources: { title: string; url: string }[] = [];
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
     if (chunks) {
       chunks.forEach((chunk: any) => {
         if (chunk.web) {
-          sources.push({ title: chunk.web.title || 'Source', url: chunk.web.uri });
+          sources.push({ title: chunk.web.title || 'Official Record', url: chunk.web.uri });
         }
       });
-    }
-
-    // Safety: ensure identifiedGame doesn't drift if a hint was provided
-    if (gameHint && !result.identifiedGame.toLowerCase().includes(gameHint.toLowerCase())) {
-        result.identifiedGame = gameHint;
     }
 
     return { ...result, sources: sources.length > 0 ? sources : undefined };
   } catch (e) {
     console.error("Gemini Analysis Error:", e);
-    throw new Error("I couldn't identify this specific moment accurately. Please check the URL or try another clip.");
+    throw new Error("Match verification failed. The video content didn't match official records. Please ensure the link is public.");
   }
 }
 
